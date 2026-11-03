@@ -1,70 +1,91 @@
-/* ============================================================
-   SYNAPSE SQL -> SQL SERVER CREATE TABLE GENERATOR
+/*================================================================
+  SYNAPSE SQL -> SQL SERVER CREATE TABLE GENERATOR
 
-   Purpose:
-       Read a source table's column metadata from Synapse SQL
-       and generate a SQL Server-compatible CREATE TABLE command.
+  PURPOSE:
+      Generate SQL Server CREATE TABLE DDL based on a source
+      Synapse SQL table.
 
-   Design:
-       - Preserves column names and ordinal positions
-       - Preserves supported data types
-       - Preserves string lengths
-       - Preserves decimal precision and scale
-       - Makes all destination columns NULLABLE
-       - Does not copy identity or computed-column properties
-       - Converts timestamp/rowversion to binary(8)
-       - Stops when it encounters unsupported types
+  OUTPUT:
+      A SQL Server-compatible CREATE TABLE statement.
 
-   Output:
-       A CREATE TABLE command suitable for an ADF Script activity
-       or execution against the SQL Server destination.
+  DESIGN:
+      1. Reads source table metadata.
+      2. Maps source data types to SQL Server data types.
+      3. Preserves column order.
+      4. Preserves string lengths.
+      5. Preserves decimal precision and scale.
+      6. Makes all destination columns nullable.
+      7. Converts ROWVERSION/TIMESTAMP to BINARY(8).
+      8. Reports unsupported data types.
+      9. Generates CREATE TABLE only if the table does not exist.
 
-   ============================================================ */
+  IMPORTANT:
+      Run this query in the Synapse database containing the
+      source table.
 
-DECLARE @SourceSchema       NVARCHAR(128) = 'dbo';
-DECLARE @SourceTable        NVARCHAR(128) = 'YourSourceTable';
-
-DECLARE @DestinationSchema  NVARCHAR(128) = 'dbo';
-DECLARE @DestinationTable   NVARCHAR(128) = 'YourDestinationTable';
+      Execute the returned CREATE TABLE statement against the
+      destination SQL Server database.
+================================================================*/
 
 
-/* ============================================================
-   1. FIND SOURCE TABLE
-   ============================================================ */
+/*================================================================
+  1. CONFIGURATION
+================================================================*/
+
+DECLARE @SourceSchema NVARCHAR(128) = 'dbo';
+DECLARE @SourceTable NVARCHAR(128) = 'YourSourceTable';
+
+DECLARE @DestinationSchema NVARCHAR(128) = 'dbo';
+DECLARE @DestinationTable NVARCHAR(128) = 'YourDestinationTable';
+
+
+/*================================================================
+  2. IDENTIFY SOURCE TABLE
+================================================================*/
 
 DECLARE @SourceObjectID INT;
 
 SET @SourceObjectID =
     OBJECT_ID(
-        QUOTENAME(@SourceSchema) + N'.' + QUOTENAME(@SourceTable)
+        QUOTENAME(@SourceSchema)
+        + N'.'
+        + QUOTENAME(@SourceTable)
     );
+
 
 IF @SourceObjectID IS NULL
 BEGIN
+
     SELECT
         'ERROR' AS Status,
-        'Source table was not found.' AS Message,
+        'Source table was not found or metadata is inaccessible.'
+            AS Message,
         @SourceSchema AS SourceSchema,
         @SourceTable AS SourceTable;
 
     RETURN;
+
 END;
 
 
-/* ============================================================
-   2. BUILD COLUMN METADATA
-   ============================================================ */
+/*================================================================
+  3. CREATE COLUMN METADATA TABLE
+================================================================*/
 
 DECLARE @ColumnDefinitions TABLE
 (
-    ColumnID       INT,
-    ColumnName     NVARCHAR(128),
-    SourceType     NVARCHAR(128),
+    ColumnID INT,
+    ColumnName NVARCHAR(128),
+    SourceType NVARCHAR(128),
     DestinationType NVARCHAR(500),
-    IsSupported    BIT,
-    Issue          NVARCHAR(1000)
+    IsSupported INT,
+    Issue NVARCHAR(1000)
 );
 
+
+/*================================================================
+  4. READ SOURCE COLUMN METADATA AND MAP DATA TYPES
+================================================================*/
 
 INSERT INTO @ColumnDefinitions
 (
@@ -75,33 +96,46 @@ INSERT INTO @ColumnDefinitions
     IsSupported,
     Issue
 )
+
 SELECT
+
     c.column_id,
+
     c.name,
-    bt.name,
+
+    TYPE_NAME(c.system_type_id) AS SourceType,
+
+
+    /*------------------------------------------------------------
+      DESTINATION DATA TYPE MAPPING
+    ------------------------------------------------------------*/
 
     CASE
-        /* Integer types */
-        WHEN bt.name = 'bigint'
+
+        /* INTEGER TYPES */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'bigint'
             THEN 'BIGINT'
 
-        WHEN bt.name = 'int'
+        WHEN TYPE_NAME(c.system_type_id) = 'int'
             THEN 'INT'
 
-        WHEN bt.name = 'smallint'
+        WHEN TYPE_NAME(c.system_type_id) = 'smallint'
             THEN 'SMALLINT'
 
-        WHEN bt.name = 'tinyint'
+        WHEN TYPE_NAME(c.system_type_id) = 'tinyint'
             THEN 'TINYINT'
 
-        WHEN bt.name = 'bit'
+        WHEN TYPE_NAME(c.system_type_id) = 'bit'
             THEN 'BIT'
 
 
-        /* Decimal / numeric */
-        WHEN bt.name IN ('decimal', 'numeric')
+        /* DECIMAL / NUMERIC */
+
+        WHEN TYPE_NAME(c.system_type_id) IN ('decimal', 'numeric')
              AND c.precision BETWEEN 1 AND 38
              AND c.scale <= c.precision
+
             THEN
                 'DECIMAL('
                 + CAST(c.precision AS VARCHAR(10))
@@ -110,82 +144,95 @@ SELECT
                 + ')'
 
 
-        /* Money */
-        WHEN bt.name = 'money'
+        /* MONEY */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'money'
             THEN 'MONEY'
 
-        WHEN bt.name = 'smallmoney'
+        WHEN TYPE_NAME(c.system_type_id) = 'smallmoney'
             THEN 'SMALLMONEY'
 
 
-        /* Floating point */
-        WHEN bt.name = 'float'
+        /* FLOATING POINT */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'float'
             THEN 'FLOAT'
 
-        WHEN bt.name = 'real'
+        WHEN TYPE_NAME(c.system_type_id) = 'real'
             THEN 'REAL'
 
 
-        /* Date and time */
-        WHEN bt.name = 'date'
+        /* DATE AND TIME */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'date'
             THEN 'DATE'
 
-        WHEN bt.name = 'datetime'
+        WHEN TYPE_NAME(c.system_type_id) = 'datetime'
             THEN 'DATETIME'
 
-        WHEN bt.name = 'smalldatetime'
+        WHEN TYPE_NAME(c.system_type_id) = 'smalldatetime'
             THEN 'SMALLDATETIME'
 
-        WHEN bt.name = 'datetime2'
+        WHEN TYPE_NAME(c.system_type_id) = 'datetime2'
             THEN
                 'DATETIME2('
                 + CAST(c.scale AS VARCHAR(10))
                 + ')'
 
-        WHEN bt.name = 'datetimeoffset'
+        WHEN TYPE_NAME(c.system_type_id) = 'datetimeoffset'
             THEN
                 'DATETIMEOFFSET('
                 + CAST(c.scale AS VARCHAR(10))
                 + ')'
 
-        WHEN bt.name = 'time'
+        WHEN TYPE_NAME(c.system_type_id) = 'time'
             THEN
                 'TIME('
                 + CAST(c.scale AS VARCHAR(10))
                 + ')'
 
 
-        /* Character data */
-        WHEN bt.name = 'varchar'
+        /* VARCHAR */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'varchar'
              AND c.max_length = -1
             THEN 'VARCHAR(MAX)'
 
-        WHEN bt.name = 'varchar'
+        WHEN TYPE_NAME(c.system_type_id) = 'varchar'
              AND c.max_length BETWEEN 1 AND 8000
             THEN
                 'VARCHAR('
                 + CAST(c.max_length AS VARCHAR(10))
                 + ')'
 
-        WHEN bt.name = 'nvarchar'
+
+        /* NVARCHAR */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'nvarchar'
              AND c.max_length = -1
             THEN 'NVARCHAR(MAX)'
 
-        WHEN bt.name = 'nvarchar'
+        WHEN TYPE_NAME(c.system_type_id) = 'nvarchar'
              AND c.max_length BETWEEN 2 AND 8000
             THEN
                 'NVARCHAR('
                 + CAST(c.max_length / 2 AS VARCHAR(10))
                 + ')'
 
-        WHEN bt.name = 'char'
+
+        /* CHAR */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'char'
              AND c.max_length BETWEEN 1 AND 8000
             THEN
                 'CHAR('
                 + CAST(c.max_length AS VARCHAR(10))
                 + ')'
 
-        WHEN bt.name = 'nchar'
+
+        /* NCHAR */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'nchar'
              AND c.max_length BETWEEN 2 AND 8000
             THEN
                 'NCHAR('
@@ -193,19 +240,23 @@ SELECT
                 + ')'
 
 
-        /* Binary data */
-        WHEN bt.name = 'varbinary'
+        /* VARBINARY */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'varbinary'
              AND c.max_length = -1
             THEN 'VARBINARY(MAX)'
 
-        WHEN bt.name = 'varbinary'
+        WHEN TYPE_NAME(c.system_type_id) = 'varbinary'
              AND c.max_length BETWEEN 1 AND 8000
             THEN
                 'VARBINARY('
                 + CAST(c.max_length AS VARCHAR(10))
                 + ')'
 
-        WHEN bt.name = 'binary'
+
+        /* BINARY */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'binary'
              AND c.max_length BETWEEN 1 AND 8000
             THEN
                 'BINARY('
@@ -213,156 +264,198 @@ SELECT
                 + ')'
 
 
-        /* GUID */
-        WHEN bt.name = 'uniqueidentifier'
+        /* UNIQUEIDENTIFIER */
+
+        WHEN TYPE_NAME(c.system_type_id) = 'uniqueidentifier'
             THEN 'UNIQUEIDENTIFIER'
 
 
-        /* SQL Server rowversion cannot be explicitly inserted.
-           Store the source's 8-byte value as binary instead. */
-        WHEN bt.name IN ('timestamp', 'rowversion')
+        /* TIMESTAMP / ROWVERSION */
+
+        WHEN TYPE_NAME(c.system_type_id) IN ('timestamp', 'rowversion')
             THEN 'BINARY(8)'
 
 
-        /* Anything else is deliberately rejected */
+        /* UNSUPPORTED */
+
         ELSE NULL
 
     END AS DestinationType,
 
 
-    CASE
-        WHEN bt.name IN
-        (
-            'bigint', 'int', 'smallint', 'tinyint', 'bit',
-            'decimal', 'numeric',
-            'money', 'smallmoney',
-            'float', 'real',
-            'date', 'datetime', 'smalldatetime',
-            'datetime2', 'datetimeoffset', 'time',
-            'varchar', 'nvarchar', 'char', 'nchar',
-            'varbinary', 'binary',
-            'uniqueidentifier',
-            'timestamp', 'rowversion'
-        )
-        AND
-        (
-            (
-                bt.name IN ('decimal', 'numeric')
-                AND
-                (
-                    c.precision NOT BETWEEN 1 AND 38
-                    OR c.scale > c.precision
-                )
-            )
-            OR
-            (
-                bt.name IN ('varchar', 'nvarchar', 'char', 'nchar',
-                            'varbinary', 'binary')
-                AND c.max_length = 0
-            )
-            OR
-            (
-                bt.name IN ('varchar', 'char', 'varbinary', 'binary')
-                AND c.max_length > 8000
-            )
-            OR
-            (
-                bt.name IN ('nvarchar', 'nchar')
-                AND c.max_length > 8000
-            )
-        )
-        THEN 0
+    /*------------------------------------------------------------
+      VALIDATION
+    ------------------------------------------------------------*/
 
-        WHEN bt.name IN
+    CASE
+
+        WHEN TYPE_NAME(c.system_type_id) IN
         (
-            'bigint', 'int', 'smallint', 'tinyint', 'bit',
-            'decimal', 'numeric',
-            'money', 'smallmoney',
-            'float', 'real',
-            'date', 'datetime', 'smalldatetime',
-            'datetime2', 'datetimeoffset', 'time',
-            'varchar', 'nvarchar', 'char', 'nchar',
-            'varbinary', 'binary',
+            'bigint',
+            'int',
+            'smallint',
+            'tinyint',
+            'bit',
+            'decimal',
+            'numeric',
+            'money',
+            'smallmoney',
+            'float',
+            'real',
+            'date',
+            'datetime',
+            'smalldatetime',
+            'datetime2',
+            'datetimeoffset',
+            'time',
+            'varchar',
+            'nvarchar',
+            'char',
+            'nchar',
+            'varbinary',
+            'binary',
             'uniqueidentifier',
-            'timestamp', 'rowversion'
+            'timestamp',
+            'rowversion'
         )
+
+        AND NOT
+        (
+            TYPE_NAME(c.system_type_id) IN ('decimal', 'numeric')
+            AND
+            (
+                c.precision NOT BETWEEN 1 AND 38
+                OR c.scale > c.precision
+            )
+        )
+
+        AND NOT
+        (
+            TYPE_NAME(c.system_type_id) IN
+            (
+                'varchar',
+                'char',
+                'varbinary',
+                'binary'
+            )
+            AND c.max_length NOT BETWEEN 1 AND 8000
+            AND c.max_length <> -1
+        )
+
+        AND NOT
+        (
+            TYPE_NAME(c.system_type_id) IN ('nvarchar', 'nchar')
+            AND c.max_length NOT BETWEEN 2 AND 8000
+            AND c.max_length <> -1
+        )
+
         THEN 1
 
         ELSE 0
+
     END AS IsSupported,
 
 
+    /*------------------------------------------------------------
+      VALIDATION ERROR MESSAGE
+    ------------------------------------------------------------*/
+
     CASE
-        WHEN bt.name IS NULL
-            THEN 'Unable to identify underlying SQL data type.'
 
-        WHEN bt.name NOT IN
+        WHEN TYPE_NAME(c.system_type_id) NOT IN
         (
-            'bigint', 'int', 'smallint', 'tinyint', 'bit',
-            'decimal', 'numeric',
-            'money', 'smallmoney',
-            'float', 'real',
-            'date', 'datetime', 'smalldatetime',
-            'datetime2', 'datetimeoffset', 'time',
-            'varchar', 'nvarchar', 'char', 'nchar',
-            'varbinary', 'binary',
+            'bigint',
+            'int',
+            'smallint',
+            'tinyint',
+            'bit',
+            'decimal',
+            'numeric',
+            'money',
+            'smallmoney',
+            'float',
+            'real',
+            'date',
+            'datetime',
+            'smalldatetime',
+            'datetime2',
+            'datetimeoffset',
+            'time',
+            'varchar',
+            'nvarchar',
+            'char',
+            'nchar',
+            'varbinary',
+            'binary',
             'uniqueidentifier',
-            'timestamp', 'rowversion'
+            'timestamp',
+            'rowversion'
         )
-            THEN 'Unsupported or unverified source data type.'
 
-        WHEN bt.name IN ('decimal', 'numeric')
+            THEN 'Unsupported source data type.'
+
+
+        WHEN TYPE_NAME(c.system_type_id) IN ('decimal', 'numeric')
              AND
              (
                  c.precision NOT BETWEEN 1 AND 38
                  OR c.scale > c.precision
              )
+
             THEN 'Invalid decimal precision or scale.'
 
-        WHEN bt.name IN ('varchar', 'char', 'varbinary', 'binary')
-             AND c.max_length > 8000
-            THEN 'Source length exceeds SQL Server non-MAX limit.'
 
-        WHEN bt.name IN ('nvarchar', 'nchar')
-             AND c.max_length > 8000
-            THEN 'Source length exceeds SQL Server non-MAX limit.'
+        WHEN TYPE_NAME(c.system_type_id) IN
+        (
+            'varchar',
+            'char',
+            'varbinary',
+            'binary'
+        )
+        AND c.max_length NOT BETWEEN 1 AND 8000
+        AND c.max_length <> -1
 
-        WHEN c.max_length = 0
-             AND bt.name IN
-             (
-                 'varchar', 'nvarchar', 'char', 'nchar',
-                 'varbinary', 'binary'
-             )
-            THEN 'Invalid or unavailable column length.'
+            THEN 'Invalid or unsupported binary/character length.'
+
+
+        WHEN TYPE_NAME(c.system_type_id) IN ('nvarchar', 'nchar')
+        AND c.max_length NOT BETWEEN 2 AND 8000
+        AND c.max_length <> -1
+
+            THEN 'Invalid or unsupported Unicode character length.'
+
 
         ELSE NULL
+
     END AS Issue
 
+
 FROM sys.columns c
-
-INNER JOIN sys.objects o
-    ON c.object_id = o.object_id
-
-LEFT JOIN sys.types bt
-    ON c.system_type_id = bt.system_type_id
-   AND bt.user_type_id = bt.system_type_id
 
 WHERE c.object_id = @SourceObjectID;
 
 
-/* ============================================================
-   3. VALIDATE METADATA
-   ============================================================ */
+/*================================================================
+  5. VALIDATE SOURCE COLUMNS
+================================================================*/
 
-IF NOT EXISTS (SELECT 1 FROM @ColumnDefinitions)
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM @ColumnDefinitions
+)
 BEGIN
+
     SELECT
         'ERROR' AS Status,
-        'No columns were found for the source table.' AS Message;
+        'No source columns were found.' AS Message;
 
     RETURN;
+
 END;
 
+
+/* Return unsupported columns and stop */
 
 IF EXISTS
 (
@@ -379,13 +472,17 @@ BEGIN
         SourceType,
         DestinationType,
         Issue
+
     FROM @ColumnDefinitions
+
     WHERE IsSupported = 0
+
     ORDER BY ColumnID;
+
 
     SELECT
         'CREATE TABLE NOT GENERATED' AS Status,
-        'Resolve the unsupported columns before creating the destination table.'
+        'Resolve unsupported data types before proceeding.'
             AS Message;
 
     RETURN;
@@ -393,92 +490,151 @@ BEGIN
 END;
 
 
-/* ============================================================
-   4. GENERATE COLUMN DEFINITIONS
-   ============================================================ */
+/*================================================================
+  6. GENERATE COLUMN DEFINITIONS
+
+  STRING_AGG replaces FOR XML PATH.
+
+  WITHIN GROUP preserves source column order.
+================================================================*/
 
 DECLARE @ColumnDDL NVARCHAR(MAX);
 
-SELECT @ColumnDDL =
-    STUFF
-    (
+
+SELECT
+    @ColumnDDL =
+        STRING_AGG
         (
-            SELECT
-                CHAR(13) + CHAR(10)
-                + N'    ' + QUOTENAME(ColumnName)
-                + N' ' + DestinationType
-                + N' NULL,'
-            FROM @ColumnDefinitions
-            ORDER BY ColumnID
-            FOR XML PATH(''), TYPE
-        ).value('.', 'NVARCHAR(MAX)'),
-        1,
-        2,
-        ''
-    );
+            CAST
+            (
+                QUOTENAME(ColumnName)
+                + N' '
+                + DestinationType
+                + N' NULL'
+
+                AS NVARCHAR(MAX)
+            ),
+
+            N',' + CHAR(13) + CHAR(10) + N'    '
+
+        )
+        WITHIN GROUP (ORDER BY ColumnID)
+
+FROM @ColumnDefinitions;
 
 
-/* Remove final comma */
-SET @ColumnDDL =
-    LEFT(@ColumnDDL, LEN(@ColumnDDL) - 1);
+/* Validate generated DDL */
+
+IF @ColumnDDL IS NULL OR LEN(@ColumnDDL) = 0
+BEGIN
+
+    SELECT
+        'ERROR' AS Status,
+        'Unable to generate column definitions.' AS Message;
+
+    RETURN;
+
+END;
 
 
-/* ============================================================
-   5. GENERATE FINAL CREATE TABLE COMMAND
-   ============================================================ */
+/*================================================================
+  7. GENERATE FINAL CREATE TABLE COMMAND
+================================================================*/
 
 DECLARE @CreateTableSQL NVARCHAR(MAX);
 
+
 SET @CreateTableSQL =
+
     N'IF OBJECT_ID(N'''
-    + REPLACE(
-        QUOTENAME(@DestinationSchema)
-        + N'.'
-        + QUOTENAME(@DestinationTable),
-        '''',
-        ''''''
+    + REPLACE
+      (
+          QUOTENAME(@DestinationSchema)
+          + N'.'
+          + QUOTENAME(@DestinationTable),
+
+          '''',
+          ''''''
       )
+
     + N''', N''U'') IS NULL'
+
     + CHAR(13) + CHAR(10)
+
     + N'BEGIN'
+
     + CHAR(13) + CHAR(10)
+
     + N'    CREATE TABLE '
+
     + QUOTENAME(@DestinationSchema)
+
     + N'.'
+
     + QUOTENAME(@DestinationTable)
+
     + N' ('
+
     + CHAR(13) + CHAR(10)
+
+    + N'    '
+
     + @ColumnDDL
+
     + CHAR(13) + CHAR(10)
+
     + N'    );'
+
     + CHAR(13) + CHAR(10)
+
     + N'END;';
 
 
-/* ============================================================
-   6. RETURN GENERATED SQL
-   ============================================================ */
+/*================================================================
+  8. RETURN GENERATED CREATE TABLE STATEMENT
+================================================================*/
 
 SELECT
+
     'SUCCESS' AS Status,
+
     @SourceSchema AS SourceSchema,
+
     @SourceTable AS SourceTable,
+
     @DestinationSchema AS DestinationSchema,
+
     @DestinationTable AS DestinationTable,
+
     (
         SELECT COUNT(*)
         FROM @ColumnDefinitions
     ) AS ColumnCount,
+
     @CreateTableSQL AS CreateTableSQL;
 
 
-/* Optional: return the individual column mappings for auditing */
+/*================================================================
+  9. RETURN COLUMN MAPPING FOR VALIDATION
+================================================================*/
 
 SELECT
+
     ColumnID,
+
     ColumnName,
+
     SourceType,
+
     DestinationType,
+
     'NULL' AS DestinationNullability
+
 FROM @ColumnDefinitions
+
 ORDER BY ColumnID;
+
+
+/*================================================================
+  END
+================================================================*/

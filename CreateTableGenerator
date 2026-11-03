@@ -1,5 +1,32 @@
 /*================================================================
-  SYNAPSE SQL -> SQL SERVER CREATE TABLE GENERATOR
+First, run this diagnostic query in your Fabric SQL endpoint
+SELECT
+    TABLE_SCHEMA,
+    TABLE_NAME,
+    COLUMN_NAME,
+    ORDINAL_POSITION,
+    DATA_TYPE,
+    CHARACTER_MAXIMUM_LENGTH,
+    NUMERIC_PRECISION,
+    NUMERIC_SCALE,
+    IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'dbo'
+  AND TABLE_NAME = 'YourSourceTable'
+ORDER BY ORDINAL_POSITION;
+
+Replace YourSourceTable with an actual source table.
+
+This query uses INFORMATION_SCHEMA.COLUMNS, which is the metadata interface I want to use for this implementation.
+
+Send me the results for one representative table, or at least tell me whether this query runs successfully.
+
+I can then give you a complete Fabric-compatible generator rather than another script that relies on unsupported features.
+
+One important distinction: Your Fabric SQL endpoint is generally read-only for data-definition and data-manipulation operations. That's fine for this design: Fabric generates the DDL, and ADF executes it against your on-premises SQL Server destinations.
+
+
+SYNAPSE SQL -> SQL SERVER CREATE TABLE GENERATOR
 
   VERSION: Uses temporary tables instead of table variables.
 

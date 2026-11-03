@@ -1,24 +1,14 @@
-/*==============================================================
-  FABRIC SQL ENDPOINT -> ON-PREMISES SQL SERVER
-  CREATE TABLE GENERATOR
-
-  Metadata source: INFORMATION_SCHEMA.COLUMNS
-
-  Output: SQL Server-compatible CREATE TABLE statement
-
-  Destination columns are intentionally nullable.
-==============================================================*/
-
-
-/*==============================================================
-  1. CONFIGURATION
-==============================================================*/
-
-DECLARE @SourceSchema NVARCHAR(128) = 'dbo';
-DECLARE @SourceTable NVARCHAR(128) = 'YourSourceTable';
-
-DECLARE @DestinationSchema NVARCHAR(128) = 'dbo';
-DECLARE @DestinationTable NVARCHAR(128) = 'YourDestinationTable';
+DECLARE 
+@ENTITY VARCHAR(10)='WCM',
+@SourceSchema NVARCHAR(128) = 'dbo_storage',
+@SourceTable NVARCHAR(128) = 'CLARITY_EMP',
+@DestinationSchema NVARCHAR(128) = 'dbo'
+DECLARE @DestinationTable NVARCHAR(128) = @SourceTable,
+		@SQL VARCHAR(MAX) ='' 
+SET @SQL='
+IF EXISTS(SELECT * FROM PROD_CUSTOM.SYS.TABLES WHERE NAME=''DOWNSTREAM_CREATE_TABLE_'+@ENTITY+'_'+@SourceTable+''') BEGIN DROP TABLE PROD_CUSTOM.DBO.DOWNSTREAM_CREATE_TABLE_'+@ENTITY+'_'+@SourceTable+' END 
+'
+EXEC(@SQL) 
 
 
 /*==============================================================
@@ -362,32 +352,34 @@ SET @CreateTableSQL =
   7. RETURN GENERATED SQL
 ==============================================================*/
 
+INSERT INTO PROD_CUSTOM.DBO.DOWNSTREAM_CREATE_TABLE_WCM_CLARITY_EMP
 SELECT
 
     'SUCCESS' AS Status,
-
+   
     @SourceSchema AS SourceSchema,
-
+   
     @SourceTable AS SourceTable,
-
+   
     @DestinationSchema AS DestinationSchema,
-
+   
     @DestinationTable AS DestinationTable,
-
+   
     (
         SELECT COUNT(*)
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = @SourceSchema
           AND TABLE_NAME = @SourceTable
     ) AS ColumnCount,
-
-    @CreateTableSQL AS CreateTableSQL;
+    @CreateTableSQL AS CreateTableSQL
+	;
 
 
 /*==============================================================
   8. RETURN SOURCE COLUMN MAPPING FOR REVIEW
 ==============================================================*/
 
+/*
 SELECT
 
     ORDINAL_POSITION,
@@ -412,3 +404,4 @@ WHERE TABLE_SCHEMA = @SourceSchema
   AND TABLE_NAME = @SourceTable
 
 ORDER BY ORDINAL_POSITION;
+*/

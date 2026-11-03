@@ -1,14 +1,33 @@
-DECLARE 
-@ENTITY VARCHAR(10)='WCM',
-@SourceSchema NVARCHAR(128) = 'dbo_storage',
-@SourceTable NVARCHAR(128) = 'CLARITY_EMP',
-@DestinationSchema NVARCHAR(128) = 'dbo'
-DECLARE @DestinationTable NVARCHAR(128) = @SourceTable,
-		@SQL VARCHAR(MAX) ='' 
-SET @SQL='
-IF EXISTS(SELECT * FROM PROD_CUSTOM.SYS.TABLES WHERE NAME=''DOWNSTREAM_CREATE_TABLE_'+@ENTITY+'_'+@SourceTable+''') BEGIN DROP TABLE PROD_CUSTOM.DBO.DOWNSTREAM_CREATE_TABLE_'+@ENTITY+'_'+@SourceTable+' END 
-'
-EXEC(@SQL) 
+/*==============================================================
+  1. PARAMETERS
+==============================================================*/
+
+DECLARE
+    @ENTITY             VARCHAR(10)  = 'WCM',
+    @SourceSchema       NVARCHAR(128) = 'dbo_storage',
+    @SourceTable        NVARCHAR(128) = 'CLARITY_EMP',
+    @DestinationSchema  NVARCHAR(128) = 'dbo';
+
+DECLARE
+    @DestinationTable   NVARCHAR(128),
+    @ResultTableName    VARCHAR(128),
+    @ResultTableFull    VARCHAR(300),
+    @SQL                VARCHAR(MAX) = '';
+
+
+SET @DestinationTable = @SourceTable;
+
+-- Build dynamic metadata table name
+SET @ResultTableName =
+    'DOWNSTREAM_CREATE_TABLE_'
+    + @ENTITY
+    + '_'
+    + CAST(@SourceTable AS VARCHAR(128));
+
+-- Fully qualified result table name
+SET @ResultTableFull =
+    'PROD_CUSTOM.DBO.'
+    + QUOTENAME(@ResultTableName);
 
 
 /*==============================================================
@@ -23,30 +42,25 @@ IF NOT EXISTS
       AND TABLE_NAME = @SourceTable
 )
 BEGIN
+
     SELECT
         'ERROR' AS Status,
         'Source table was not found or metadata is inaccessible.'
             AS Message;
 
     RETURN;
+
 END;
 
 
 /*==============================================================
-  3. GENERATE DESTINATION COLUMN DEFINITIONS
+  3. CHECK FOR UNSUPPORTED DATA TYPES
 ==============================================================*/
 
-DECLARE @ColumnDDL NVARCHAR(MAX);
 DECLARE @HasUnsupportedTypes INT;
 
-
-/*--------------------------------------------------------------
-  Check for unsupported data types
---------------------------------------------------------------*/
-
 SELECT
-    @HasUnsupportedTypes =
-        COUNT(*)
+    @HasUnsupportedTypes = COUNT(*)
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = @SourceSchema
   AND TABLE_NAME = @SourceTable
@@ -80,10 +94,6 @@ WHERE TABLE_SCHEMA = @SourceSchema
       'rowversion'
   );
 
-
-/*--------------------------------------------------------------
-  Report unsupported types
---------------------------------------------------------------*/
 
 IF @HasUnsupportedTypes > 0
 BEGIN
@@ -131,10 +141,10 @@ END;
 
 
 /*==============================================================
-  4. BUILD COLUMN DEFINITIONS
-
-  STRING_AGG concatenates the column definitions.
+  4. GENERATE DESTINATION COLUMN DEFINITIONS
 ==============================================================*/
+
+DECLARE @ColumnDDL NVARCHAR(MAX);
 
 SELECT
     @ColumnDDL =
@@ -268,7 +278,6 @@ SELECT
                     WHEN 'timestamp' THEN 'BINARY(8)'
                     WHEN 'rowversion' THEN 'BINARY(8)'
 
-
                 END
                 + ' NULL'
 
@@ -349,59 +358,118 @@ SET @CreateTableSQL =
 
 
 /*==============================================================
-  7. RETURN GENERATED SQL
+  7. DROP EXISTING RESULT TABLE
 ==============================================================*/
 
-INSERT INTO PROD_CUSTOM.DBO.DOWNSTREAM_CREATE_TABLE_WCM_CLARITY_EMP
-SELECT
+SET @SQL =
 
-    'SUCCESS' AS Status,
-   
-    @SourceSchema AS SourceSchema,
-   
-    @SourceTable AS SourceTable,
-   
-    @DestinationSchema AS DestinationSchema,
-   
-    @DestinationTable AS DestinationTable,
-   
+    'IF EXISTS
     (
-        SELECT COUNT(*)
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = @SourceSchema
-          AND TABLE_NAME = @SourceTable
-    ) AS ColumnCount,
-    @CreateTableSQL AS CreateTableSQL
-	;
+        SELECT 1
+        FROM PROD_CUSTOM.SYS.TABLES
+        WHERE NAME = '''
+        + REPLACE(@ResultTableName, '''', '''''')
+        + '''
+    )
+    BEGIN
+        DROP TABLE '
+        + @ResultTableFull
+        + ';
+    END;';
+
+EXEC(@SQL);
 
 
 /*==============================================================
-  8. RETURN SOURCE COLUMN MAPPING FOR REVIEW
+  8. CREATE RESULT TABLE
 ==============================================================*/
 
-/*
+SET @SQL =
+
+    'CREATE TABLE '
+    + @ResultTableFull
+    + '
+    (
+        Status              VARCHAR(20)  NOT NULL,
+        SourceSchema        VARCHAR(128) NOT NULL,
+        SourceTable         VARCHAR(128) NOT NULL,
+        DestinationSchema   VARCHAR(128) NOT NULL,
+        DestinationTable    VARCHAR(128) NOT NULL,
+        ColumnCount         INT          NOT NULL,
+        CreateTableSQL      VARCHAR(MAX) NOT NULL
+    );';
+
+EXEC(@SQL);
+
+
+/*==============================================================
+  9. INSERT GENERATED SQL INTO DYNAMIC RESULT TABLE
+==============================================================*/
+
+DECLARE @InsertSQL VARCHAR(MAX);
+
+SET @InsertSQL =
+
+    'INSERT INTO '
+    + @ResultTableFull
+    + '
+    (
+        Status,
+        SourceSchema,
+        SourceTable,
+        DestinationSchema,
+        DestinationTable,
+        ColumnCount,
+        CreateTableSQL
+    )
+    VALUES
+    (
+        ''SUCCESS'',
+        @pSourceSchema,
+        @pSourceTable,
+        @pDestinationSchema,
+        @pDestinationTable,
+        @pColumnCount,
+        @pCreateTableSQL
+    );';
+
+
+DECLARE @ColumnCount INT;
+
 SELECT
-
-    ORDINAL_POSITION,
-
-    COLUMN_NAME,
-
-    DATA_TYPE,
-
-    CHARACTER_MAXIMUM_LENGTH,
-
-    NUMERIC_PRECISION,
-
-    NUMERIC_SCALE,
-
-    DATETIME_PRECISION,
-
-    IS_NULLABLE
-
+    @ColumnCount = COUNT(*)
 FROM INFORMATION_SCHEMA.COLUMNS
-
 WHERE TABLE_SCHEMA = @SourceSchema
-  AND TABLE_NAME = @SourceTable
+  AND TABLE_NAME = @SourceTable;
 
-ORDER BY ORDINAL_POSITION;
-*/
+
+/* Parameterized insert */
+
+EXEC sp_executesql
+    @InsertSQL,
+    N'
+        @pSourceSchema VARCHAR(128),
+        @pSourceTable VARCHAR(128),
+        @pDestinationSchema VARCHAR(128),
+        @pDestinationTable VARCHAR(128),
+        @pColumnCount INT,
+        @pCreateTableSQL NVARCHAR(MAX)
+    ',
+    @pSourceSchema = @SourceSchema,
+    @pSourceTable = @SourceTable,
+    @pDestinationSchema = @DestinationSchema,
+    @pDestinationTable = @DestinationTable,
+    @pColumnCount = @ColumnCount,
+    @pCreateTableSQL = @CreateTableSQL;
+
+
+/*==============================================================
+  10. RETURN RESULT
+==============================================================*/
+
+SET @SQL =
+    'SELECT * FROM '
+    + @ResultTableFull
+    + ';';
+
+EXEC(@SQL);

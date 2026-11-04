@@ -15,20 +15,12 @@ Msg 15816, Level 16, State 3, Line 51
 The query references an object that is not supported in distributed processing mode.
 
 
-
 DECLARE @tn VARCHAR(100) = 'pat_enc';
 
-DROP TABLE IF EXISTS DOWNSTREAM_COLUMN_UPDATE;
-
-CREATE TABLE DOWNSTREAM_COLUMN_UPDATE
-(
-    COLUMNLIST VARCHAR(MAX)
-);
-
-INSERT INTO DOWNSTREAM_COLUMN_UPDATE
 SELECT
-    STRING_AGG(QUOTENAME(COLUMN_NAME), ', ')
-        WITHIN GROUP (ORDER BY ORDINAL_POSITION)
-FROM PROD.INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = @tn
-  AND TABLE_SCHEMA = 'dbo';
+    STRING_AGG(
+        CAST(QUOTENAME(name) AS VARCHAR(MAX)),
+        ', '
+    ) WITHIN GROUP (ORDER BY column_id) AS ColumnList
+FROM PROD.sys.columns
+WHERE object_id = OBJECT_ID('PROD.dbo.' + @tn);

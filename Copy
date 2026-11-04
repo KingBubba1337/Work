@@ -13,3 +13,22 @@ GROUP BY s.name, t.name
 
 Msg 15816, Level 16, State 3, Line 51
 The query references an object that is not supported in distributed processing mode.
+
+
+
+
+declare @tn varchar(100)='pat_enc'
+
+DROP TABLE IF EXISTS DOWNSTREAM_COLUMN_UPDATE
+CREATE TABLE DOWNSTREAM_COLUMN_UPDATE (COLUMNLIST VARCHAR(MAX))
+INSERT INTO DOWNSTREAM_COLUMN_UPDATE
+SELECT 
+    CAST(STRING_AGG(QUOTENAME(c.name), ', ') WITHIN GROUP (ORDER BY c.column_id) AS nvarchar(max)) AS ColumnList
+FROM PROD.sys.tables AS t                           
+JOIN PROD.sys.columns AS c ON c.object_id = t.object_id 
+JOIN PROD.sys.schemas AS s ON s.schema_id = t.schema_id  
+WHERE t.name = 'pat_enc'
+GROUP BY s.name, t.name
+
+Msg 15816, Level 16, State 3, Line 51
+The query references an object that is not supported in distributed processing mode.

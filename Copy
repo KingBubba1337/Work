@@ -10,3 +10,6 @@ JOIN PROD.sys.columns AS c ON c.object_id = t.object_id
 JOIN PROD.sys.schemas AS s ON s.schema_id = t.schema_id  
 WHERE t.name = 'pat_enc'
 GROUP BY s.name, t.name
+
+Msg 15816, Level 16, State 3, Line 51
+The query references an object that is not supported in distributed processing mode.

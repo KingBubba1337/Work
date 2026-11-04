@@ -20,10 +20,46 @@ The query references an object that is not supported in distributed processing m
 
 
 
+Step 1 — Create a staging table in your control database
+Run this while connected to your control database:
+DROP TABLE IF EXISTS dbo.COLUMNLIST_STAGING;
 
-DECLARE @tn VARCHAR(100) = 'pat_enc';
+CREATE TABLE dbo.COLUMNLIST_STAGING
+(
+    TABLE_NAME VARCHAR(256),
+    COLUMN_NAME VARCHAR(256),
+    ORDINAL_POSITION INT
+);
 
-UPDATE CONTROL_DB.dbo.TABLE_LIST
+Step 2 — Insert the column metadata from PROD
+INSERT INTO dbo.COLUMNLIST_STAGING
+(
+    TABLE_NAME,
+    COLUMN_NAME,
+    ORDINAL_POSITION
+)
+SELECT
+    TABLE_NAME,
+    COLUMN_NAME,
+    ORDINAL_POSITION
+FROM PROD.INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'dbo'
+  AND TABLE_NAME = 'pat_enc';
+
+Step 3 — Build the comma-separated column list
+Now run this in your control database:
+SELECT
+    STRING_AGG(
+        CAST(QUOTENAME(COLUMN_NAME) AS VARCHAR(MAX)),
+        ', '
+    ) WITHIN GROUP (ORDER BY ORDINAL_POSITION) AS COLUMNLIST
+FROM dbo.COLUMNLIST_STAGING
+WHERE TABLE_NAME = 'pat_enc';
+
+If this works, we can use the same approach to update your table inventory.
+Step 4 — Update your table inventory
+The final update will look like this (replace the example table and key column names with yours):
+UPDATE dbo.TABLE_LIST
 SET COLUMNLIST =
 (
     SELECT
@@ -31,8 +67,7 @@ SET COLUMNLIST =
             CAST(QUOTENAME(COLUMN_NAME) AS VARCHAR(MAX)),
             ', '
         ) WITHIN GROUP (ORDER BY ORDINAL_POSITION)
-    FROM PROD.INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = 'dbo'
-      AND TABLE_NAME = @tn
+    FROM dbo.COLUMNLIST_STAGING
+    WHERE TABLE_NAME = dbo.TABLE_LIST.SOURCE_TABLE
 )
-WHERE SOURCE_TABLE = @tn;
+WHERE SOURCE_TABLE = 'pat_enc';

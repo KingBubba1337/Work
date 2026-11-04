@@ -14,12 +14,25 @@ GROUP BY s.name, t.name
 Msg 15816, Level 16, State 3, Line 51
 The query references an object that is not supported in distributed processing mode.
 
-dECLARE @tn VARCHAR(100) = 'pat_enc';
 
-SELECT
-    STRING_AGG(
-        CAST(QUOTENAME(name) AS VARCHAR(MAX)),
-        ', '
-    ) WITHIN GROUP (ORDER BY column_id) AS ColumnList
-FROM PROD.sys.columns
-WHERE object_id = OBJECT_ID('PROD.dbo.' + @tn);
+
+
+
+
+
+
+DECLARE @tn VARCHAR(100) = 'pat_enc';
+
+UPDATE CONTROL_DB.dbo.TABLE_LIST
+SET COLUMNLIST =
+(
+    SELECT
+        STRING_AGG(
+            CAST(QUOTENAME(COLUMN_NAME) AS VARCHAR(MAX)),
+            ', '
+        ) WITHIN GROUP (ORDER BY ORDINAL_POSITION)
+    FROM PROD.INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = 'dbo'
+      AND TABLE_NAME = @tn
+)
+WHERE SOURCE_TABLE = @tn;

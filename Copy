@@ -1,3 +1,42 @@
+
+DECLARE @SQL VARCHAR(MAX);
+
+SELECT @SQL =
+    STUFF
+    (
+        (
+            SELECT
+                ' UNION ALL ' +
+                'SELECT ' +
+                '''' + TABLE_SCHEMA + '.' + TABLE_NAME + ''' AS TABLE_NAME, ' +
+                'COUNT_BIG(*) AS ROW_COUNT ' +
+                'FROM PROD.' +
+                QUOTENAME(TABLE_SCHEMA) + '.' +
+                QUOTENAME(TABLE_NAME) +
+                CASE
+                    WHEN NULLIF(LTRIM(RTRIM(CONDITION)), '') IS NOT NULL
+                    THEN ' WHERE ' + CONDITION
+                    ELSE ''
+                END
+            FROM dbo.TABLE_INVENTORY
+            WHERE ALIAS_VALUE = 'A'
+            ORDER BY TABLE_SCHEMA, TABLE_NAME
+            FOR XML PATH(''), TYPE
+        ).value('.', 'VARCHAR(MAX)'),
+        1,
+        11,
+        ''
+    );
+
+-- Review generated SQL
+SELECT @SQL AS GENERATED_SQL;
+
+-- Execute
+EXEC (@SQL);
+
+**************************************
+
+
 DECLARE @SQL VARCHAR(MAX);
 
 SELECT @SQL =

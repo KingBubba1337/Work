@@ -1,73 +1,28 @@
-declare @tn varchar(100)='pat_enc'
+DECLARE @SQL VARCHAR(MAX);
 
-DROP TABLE IF EXISTS DOWNSTREAM_COLUMN_UPDATE
-CREATE TABLE DOWNSTREAM_COLUMN_UPDATE (COLUMNLIST VARCHAR(MAX))
-INSERT INTO DOWNSTREAM_COLUMN_UPDATE
-SELECT 
-    CAST(STRING_AGG(QUOTENAME(c.name), ', ') WITHIN GROUP (ORDER BY c.column_id) AS nvarchar(max)) AS ColumnList
-FROM PROD.sys.tables AS t                           
-JOIN PROD.sys.columns AS c ON c.object_id = t.object_id 
-JOIN PROD.sys.schemas AS s ON s.schema_id = t.schema_id  
-WHERE t.name = 'pat_enc'
-GROUP BY s.name, t.name
-
-Msg 15816, Level 16, State 3, Line 51
-The query references an object that is not supported in distributed processing mode.
-
-
-
-
-
-
-
-Step 1 — Create a staging table in your control database
-Run this while connected to your control database:
-DROP TABLE IF EXISTS dbo.COLUMNLIST_STAGING;
-
-CREATE TABLE dbo.COLUMNLIST_STAGING
-(
-    TABLE_NAME VARCHAR(256),
-    COLUMN_NAME VARCHAR(256),
-    ORDINAL_POSITION INT
-);
-
-Step 2 — Insert the column metadata from PROD
-INSERT INTO dbo.COLUMNLIST_STAGING
-(
-    TABLE_NAME,
-    COLUMN_NAME,
-    ORDINAL_POSITION
-)
-SELECT
-    TABLE_NAME,
-    COLUMN_NAME,
-    ORDINAL_POSITION
-FROM PROD.INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_SCHEMA = 'dbo'
-  AND TABLE_NAME = 'pat_enc';
-
-Step 3 — Build the comma-separated column list
-Now run this in your control database:
-SELECT
+SELECT @SQL =
     STRING_AGG(
-        CAST(QUOTENAME(COLUMN_NAME) AS VARCHAR(MAX)),
-        ', '
-    ) WITHIN GROUP (ORDER BY ORDINAL_POSITION) AS COLUMNLIST
-FROM dbo.COLUMNLIST_STAGING
-WHERE TABLE_NAME = 'pat_enc';
+        CAST(
+            'SELECT ' +
+            '''' + TABLE_SCHEMA + '.' + TABLE_NAME + ''' AS TABLE_NAME, ' +
+            'COUNT_BIG(*) AS ROW_COUNT ' +
+            'FROM PROD.' +
+            QUOTENAME(TABLE_SCHEMA) + '.' +
+            QUOTENAME(TABLE_NAME) +
+            CASE
+                WHEN NULLIF(LTRIM(RTRIM(CONDITION)), '') IS NOT NULL
+                THEN ' WHERE ' + CONDITION
+                ELSE ''
+            END
+            AS VARCHAR(MAX)
+        ),
+        ' UNION ALL '
+    )
+FROM dbo.TABLE_INVENTORY
+WHERE ALIAS_VALUE = 'A';
 
-If this works, we can use the same approach to update your table inventory.
-Step 4 — Update your table inventory
-The final update will look like this (replace the example table and key column names with yours):
-UPDATE dbo.TABLE_LIST
-SET COLUMNLIST =
-(
-    SELECT
-        STRING_AGG(
-            CAST(QUOTENAME(COLUMN_NAME) AS VARCHAR(MAX)),
-            ', '
-        ) WITHIN GROUP (ORDER BY ORDINAL_POSITION)
-    FROM dbo.COLUMNLIST_STAGING
-    WHERE TABLE_NAME = dbo.TABLE_LIST.SOURCE_TABLE
-)
-WHERE SOURCE_TABLE = 'pat_enc';
+-- Review generated SQL
+SELECT @SQL AS GENERATED_SQL;
+
+-- Execute
+EXEC (@SQL);
